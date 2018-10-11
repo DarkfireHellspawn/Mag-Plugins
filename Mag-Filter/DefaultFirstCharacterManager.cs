@@ -110,7 +110,8 @@ namespace MagFilter
 							//afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/mt send enter");
 							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/loadui");
 							//afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/mt send enter");
-							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt meta load ACLoadTest");
+							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt meta load aceloadtest");
+                            afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt opt set enablemeta true");
 							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt start");
 						}
 
