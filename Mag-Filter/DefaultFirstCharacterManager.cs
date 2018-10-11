@@ -9,6 +9,7 @@ namespace MagFilter
 	class DefaultFirstCharacterManager
 	{
 		readonly LoginCharacterTools loginCharacterTools;
+		readonly AfterLoginCompleteMessageQueueManager afterLoginCompleteMessageQueueManager;
 
 		readonly System.Windows.Forms.Timer defaultFirstCharTimer = new System.Windows.Forms.Timer();
 
@@ -17,9 +18,10 @@ namespace MagFilter
 		string zonename;
 		string server;
 
-		public DefaultFirstCharacterManager(LoginCharacterTools loginCharacterTools)
+		public DefaultFirstCharacterManager(LoginCharacterTools loginCharacterTools, AfterLoginCompleteMessageQueueManager afterLoginCompleteMessageQueueManager)
 		{
 			this.loginCharacterTools = loginCharacterTools;
+			this.afterLoginCompleteMessageQueueManager = afterLoginCompleteMessageQueueManager;
 
 			defaultFirstCharTimer.Tick += new EventHandler(defaultFirstCharTimer_Tick);
 			defaultFirstCharTimer.Interval = 1000;
@@ -88,27 +90,33 @@ namespace MagFilter
 		{
 			try
 			{
-				var defaultFirstCharacters = Settings.SettingsManager.CharacterSelectionScreen.DefaultFirstCharacters;
+				/*var defaultFirstCharacters = Settings.SettingsManager.CharacterSelectionScreen.DefaultFirstCharacters;
 
 				foreach (var character in defaultFirstCharacters)
 				{
 					if (character.AccountName == zonename && character.Server == server)
-					{
+					{*/
 						// Bypass movies/logos
 						if (state == 1 || state == 2)
 							PostMessageTools.SendMouseClick(350, 100);
 
 						if (state == 3)
 						{
-							if (!String.IsNullOrEmpty(character.CharacterName))
+							/*if (!String.IsNullOrEmpty(character.CharacterName))
 								loginCharacterTools.LoginCharacter(character.CharacterName);
-							else if (character.CharacterIndex != -1)
-								loginCharacterTools.LoginByIndex(character.CharacterIndex);
+							else if (character.CharacterIndex != -1)*/
+								loginCharacterTools.LoginByIndex(0);
+
+							//afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/mt send enter");
+							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/loadui");
+							//afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/mt send enter");
+							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt meta load ACLoadTest");
+							afterLoginCompleteMessageQueueManager.AddToAfterLoginCompleteQueue("/vt start");
 						}
 
-						break;
+						/*break;
 					}
-				}
+				}*/
 
 				if (state >= 3)
 					defaultFirstCharTimer.Stop();

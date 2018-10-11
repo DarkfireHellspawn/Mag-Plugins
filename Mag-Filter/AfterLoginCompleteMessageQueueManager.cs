@@ -115,5 +115,10 @@ namespace MagFilter
 				e.Eat = true;
 			}
 		}
+
+		public void AddToAfterLoginCompleteQueue(string command)
+		{
+			loginCompleteMessageQueue.Enqueue(command);
+		}
 	}
 }

@@ -53,7 +53,7 @@ namespace MagFilter
 
 			frameRateLimiter.Startup();
 
-			defaultFirstCharacterManager = new DefaultFirstCharacterManager(loginCharacterTools);
+			defaultFirstCharacterManager = new DefaultFirstCharacterManager(loginCharacterTools, afterLoginCompleteMessageQueueManager);
 			loginNextCharacterManager = new LoginNextCharacterManager(loginCharacterTools);
 
 			ClientDispatch += new EventHandler<NetworkMessageEventArgs>(FilterCore_ClientDispatch);
