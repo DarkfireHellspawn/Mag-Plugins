@@ -1,36 +1,33 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.IO;
-using System.Collections.ObjectModel;
-using System.Reflection;
-
+﻿using Decal.Adapter;
+using Decal.Adapter.Wrappers;
+using Decal.Filters;
+using Mag.Shared;
 using MagTools.Client;
 using MagTools.Inventory;
 using MagTools.Loggers;
 using MagTools.Macros;
 using MagTools.Views;
-
-using Mag.Shared;
-
-using Decal.Adapter;
-using Decal.Adapter.Wrappers;
-using Decal.Filters;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Drawing;
+using System.IO;
+using System.Reflection;
 
 /*
  * Created by Mag-nus. 8/19/2011
- * 
+ *
  * No license applied, feel free to use as you wish. H4CK TH3 PL4N3T? TR45H1NG 0UR R1GHT5? Y0U D3C1D3!
- * 
+ *
  * Notice how I use try/catch on every function that is called or raised by decal (by base events or user initiated events like buttons, etc...).
  * This is very important. Don't crash out your users!
- * 
+ *
  * In 2.9.6.4+ Host and Core both have Actions objects in them. They are essentially the same thing.
  * You sould use Host.Actions though so that your code compiles against 2.9.6.0 (even though I reference 2.9.6.5 in this project)
- * 
+ *
  * If you add this plugin to decal and then also create another plugin off of this sample, you will need to change the guid in
  * Properties/AssemblyInfo.cs to have both plugins in decal at the same time.
- * 
+ *
  * If you have issues compiling, remove the Decal.Adapater and VirindiViewService references and add the ones you have locally.
  * Decal.Adapter should be in C:\Games\Decal 3.0\
  * VirindiViewService should be in C:\Games\VirindiPlugins\VirindiViewService\
@@ -38,642 +35,148 @@ using Decal.Filters;
 
 /*
  * The design of this plugin is as follows.
- * 
+ *
  * Settings:
  * Settings and configuration options that the user can set, or the plugin sets, that may or may not go into a config file are located in Settings.SettingsManager.cs
- * 
+ *
  * GUI:
  * Currently, only VVS is supported.
  * The main GUI xml, and the VVS loader/parser of that xml is located in Views.mainView.xml and Views.MainView.cs
  * Any interaction with the VVS should go into the Views folder/namespace.
  * The goal here is to isolate views from the actual plugin functionality so we can run with views disabled.
- * 
+ *
  * Design based on Dependancy:
- * 
+ *
  * [CorePluginObjects] -> [SettingsManager] -> [SettingsFile]
  *         ^                     ^
  *         |                     |
  *          ------------------[Views]
- * 
+ *
  * CorePluginObjects depends on SettingsManager, which depends on SettingsFile.
  * Views depend on CorePluginObjects and SettingsManager.
 */
 
 namespace MagTools
 {
-	// FriendlyName is the name that will show up in the plugins list of the decal agent (the one in windows, not in-game)
+	// FriendlyName is the name that will show up in the plugins list of the decal agent (the one in
+	// windows, not in-game)
 	[FriendlyName("Mag-Tools")]
 	public sealed class PluginCore : PluginBase, IPluginCore
 	{
-		/// <summary>
-		/// Returns the current instance of the plugin in Decal. If the plugin hasn't been loaded yet this will return null.
-		/// </summary>
-		public static IPluginCore Current { get; private set; }
+		#region Internal Fields + Events
 
 		internal static string PluginName = "Mag-Tools";
 
-		internal static DirectoryInfo PluginPersonalFolder
-		{
-			get
-			{
-				DirectoryInfo pluginPersonalFolder = new DirectoryInfo(Environment.GetFolderPath(Environment.SpecialFolder.Personal) + @"\Decal Plugins\" + PluginName);
+		#endregion Internal Fields + Events
 
-				try
-				{
-					if (!pluginPersonalFolder.Exists)
-						pluginPersonalFolder.Create();
-				}
-				catch (Exception ex) { Debug.LogException(ex); }
+		#region Private Fields + Events
 
-				return pluginPersonalFolder;
-			}
-		}
+		private readonly Dictionary<string, object> rememberedSettings = new Dictionary<string, object>();
 
+		private readonly System.Windows.Forms.Timer savePersistentStatsTimer = new System.Windows.Forms.Timer();
 
-		// General
-		InventoryExporter inventoryExporter;
-		InventoryLogger inventoryLogger;
-		IdleActionManager idleActionManager;
+		private readonly Collection<string> startupErrors = new Collection<string>();
 
-		// Macros
-		LoginActions loginActions;
-		PeriodicCommands periodicCommands;
-		OpenMainPackOnLogin openMainPackOnLogin;
-		MaximizeChatOnLogin maximizeChatOnLogin;
-		AutoPercentConfirmation autoPercentConfirmation;
-		AutoRecharge autoRecharge;
-		AutoTradeAccept autoTradeAccept;
-		OneTouchHeal oneTouchHeal;
-		LogOutOnDeath logOutOnDeath;
-	
-		// Trackers
-		Trackers.Equipment.EquipmentTracker equipmentTracker;
-		public Trackers.Equipment.IEquipmentTracker EquipmentTracker { get { return equipmentTracker; } }
-		Trackers.Combat.CombatTracker combatTrackerCurrent;
-		Trackers.Combat.CombatTracker combatTrackerPersistent;
-		Trackers.Corpse.CorpseTracker corpseTracker;
-		Trackers.Player.PlayerTracker playerTracker;
-		Trackers.Inventory.InventoryTracker inventoryTracker;
-		Trackers.ProfitLoss.ProfitLossTracker profitLossTracker;
+		private AccountServerCharacterGUI accountServerCharacterGUI;
 
-		// Loggers
-		Loggers.Chat.ChatLogger chatLogger;
-		Loggers.Chat.BufferedChatLogFileWriter chatLogFileWriter;
+		private AutoBuySell autoBuySell;
 
-		// Misc
-		WindowFrameRemover windowFrameRemover;
-		WindowMover windowMover;
-		FPSManager fpsManager;
+		private AutoPercentConfirmation autoPercentConfirmation;
 
+		private AutoRecharge autoRecharge;
+
+		private AutoTradeAccept autoTradeAccept;
+
+		private AutoTradeAdd autoTradeAdd;
 
 		// Relies on other decal assemblies
-		ChatFilter chatFilter;
+		private ChatFilter chatFilter;
 
+		private Loggers.Chat.BufferedChatLogFileWriter chatLogFileWriter;
+
+		// Loggers
+		private Loggers.Chat.ChatLogger chatLogger;
+
+		private ChatLoggerGUI chatLoggerGroup1GUI;
+
+		private ChatLoggerGUI chatLoggerGroup2GUI;
+
+		private Trackers.Combat.CombatTracker combatTrackerCurrent;
+
+		private CombatTrackerGUI combatTrackerGUICurrent;
+
+		private CombatTrackerGUI combatTrackerGUIPersistent;
+
+		private Trackers.Combat.CombatTracker combatTrackerPersistent;
+
+		private Trackers.Corpse.CorpseTracker corpseTracker;
+
+		private CorpseTrackerGUI corpseTrackerGUI;
+
+		// Trackers
+		private Trackers.Equipment.EquipmentTracker equipmentTracker;
+
+		private FPSManager fpsManager;
+
+		private HUD hud;
+
+		private IdleActionManager idleActionManager;
+
+		// General
+		private InventoryExporter inventoryExporter;
+
+		private InventoryLogger inventoryLogger;
 
 		// Virindi Classic Looter Extensions, depends on VTClassic.dll
-		InventoryPacker inventoryPacker;
-		public IInventoryPacker InventoryPacker { get { return inventoryPacker; } }
-		AutoTradeAdd autoTradeAdd;
-		AutoBuySell autoBuySell;
+		private InventoryPacker inventoryPacker;
 
+		private InventoryToolsView inventoryToolsView;
+
+		private Trackers.Inventory.InventoryTracker inventoryTracker;
+
+		private InventoryTrackerGUI inventoryTrackerGUI;
 
 		// Virindi Tank Extensions, depends on utank2-i.dll
-		ItemInfo.ItemInfoPrinter itemInfoPrinter;
-		Looter looter;
-		public ILooter Looter { get { return looter; } }
+		private ItemInfo.ItemInfoPrinter itemInfoPrinter;
 
+		// Macros
+		private LoginActions loginActions;
+
+		private LogOutOnDeath logOutOnDeath;
+
+		private Looter looter;
 
 		// Views, depends on VirindiViewService.dll
-		MainView mainView;
+		private MainView mainView;
 
-		ManaTrackerGUI manaTrackerGUI;
-		CombatTrackerGUI combatTrackerGUICurrent;
-		CombatTrackerGUI combatTrackerGUIPersistent;
-		CorpseTrackerGUI corpseTrackerGUI;
-		PlayerTrackerGUI playerTrackerGUI;
-		InventoryTrackerGUI inventoryTrackerGUI;
+		private ManaTrackerGUI manaTrackerGUI;
 
-		ChatLoggerGUI chatLoggerGroup1GUI;
-		ChatLoggerGUI chatLoggerGroup2GUI;
+		private MaximizeChatOnLogin maximizeChatOnLogin;
 
-		InventoryToolsView inventoryToolsView;
-		TinkeringToolsView tinkeringToolsView;
+		private OneTouchHeal oneTouchHeal;
 
-		AccountServerCharacterGUI accountServerCharacterGUI;
-		ServerGUI serverGUI;
+		private OpenMainPackOnLogin openMainPackOnLogin;
 
-		HUD hud;
+		private PeriodicCommands periodicCommands;
 
+		private Trackers.Player.PlayerTracker playerTracker;
 
-		readonly Collection<string> startupErrors = new Collection<string>();
-		readonly System.Windows.Forms.Timer savePersistentStatsTimer = new System.Windows.Forms.Timer();
+		private PlayerTrackerGUI playerTrackerGUI;
 
+		private Trackers.ProfitLoss.ProfitLossTracker profitLossTracker;
 
-		/// <summary>
-		/// This is called when the plugin is started up. This happens only once.
-		/// We init most of our objects here, EXCEPT ones that depend on other assemblies (not counting decal assemblies).
-		/// </summary>
-		protected override void Startup()
-		{
-			try
-			{
-				Current = this;
+		private ServerGUI serverGUI;
 
-				Debug.Init(PluginPersonalFolder.FullName + @"\Exceptions.txt", PluginName);
-				Mag.Shared.Settings.SettingsFile.Init(PluginPersonalFolder.FullName + @"\" + PluginName + ".xml", PluginName);
+		private TinkeringToolsView tinkeringToolsView;
 
-				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete);
-				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VTClassic);
-				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VTank);
-				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VVS);
-				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete_VHS);
-				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete_VHUD);
-				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete);
-				CoreManager.Current.CharacterFilter.Logoff += new EventHandler<Decal.Adapter.Wrappers.LogoffEventArgs>(CharacterFilter_Logoff);
-				CoreManager.Current.CommandLineText += new EventHandler<ChatParserInterceptEventArgs>(Current_CommandLineText);
+		// Misc
+		private WindowFrameRemover windowFrameRemover;
 
+		private WindowMover windowMover;
 
-				// General
-				inventoryExporter = new InventoryExporter();
-				inventoryLogger = new InventoryLogger();
-				idleActionManager = new IdleActionManager();
+		#endregion Private Fields + Events
 
-				// Macros
-				loginActions = new LoginActions();
-				periodicCommands = new PeriodicCommands();
-				openMainPackOnLogin = new OpenMainPackOnLogin();
-				maximizeChatOnLogin = new MaximizeChatOnLogin();
-				autoPercentConfirmation = new AutoPercentConfirmation();
-				autoRecharge = new AutoRecharge();
-				autoTradeAccept = new AutoTradeAccept();
-				oneTouchHeal = new OneTouchHeal();
-				logOutOnDeath = new LogOutOnDeath();
-
-				// Trackers
-				equipmentTracker = new Trackers.Equipment.EquipmentTracker();
-				combatTrackerCurrent = new Trackers.Combat.CombatTracker();
-				combatTrackerPersistent = new Trackers.Combat.CombatTracker();
-				corpseTracker = new Trackers.Corpse.CorpseTracker();
-				playerTracker = new Trackers.Player.PlayerTracker();
-				inventoryTracker = new Trackers.Inventory.InventoryTracker();
-				profitLossTracker = new Trackers.ProfitLoss.ProfitLossTracker();
-
-				// Loggers
-				chatLogger = new Loggers.Chat.ChatLogger();
-				chatLogFileWriter = new Loggers.Chat.BufferedChatLogFileWriter(null, chatLogger, TimeSpan.FromMinutes(10));
-
-				// Misc
-				windowFrameRemover = new WindowFrameRemover();
-				windowMover = new WindowMover();
-				fpsManager = new FPSManager();
-
-
-				savePersistentStatsTimer.Interval = 600000; // Set the timer to run once every 10 minutes
-				savePersistentStatsTimer.Tick += new EventHandler(SavePersistentStatsTimer_Tick);
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		/// <summary>
-		/// We init objects that depend on other assemblies here.
-		/// We don't do this in Startup() because our plugin may have loaded before theirs.
-		/// It is also possible that the assembly these objects refer to isn't loaded at all, or may not even exist.
-		/// </summary>
-		/// <param name="sender"></param>
-		/// <param name="e"></param>
-		void Current_PluginInitComplete(object sender, EventArgs e)
-		{
-			try
-			{
-				// Relies on other decal assemblies
-				try
-				{
-					chatFilter = new ChatFilter(Host); // Decal.Interop.Core
-				}
-				catch (FileNotFoundException ex) { startupErrors.Add("chatFilter failed to load: " + ex.Message); }
-				catch (Exception ex) { Debug.LogException(ex); }
-
-				//These are already wrapped and shouldn't throw.
-				MyClasses.VCS_Connector.Initialize(Host, "MagTools");
-				MyClasses.VCS_Connector.InitializeCategory("CommandLine", "Generic plugin text");
-				MyClasses.VCS_Connector.InitializeCategory("Errors", "Error messages");
-				MyClasses.VCS_Connector.InitializeCategory("IDs", "ID messages");
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void Current_PluginInitComplete_VTClassic(object sender, EventArgs e)
-		{
-			try
-			{
-				// Virindi Classic Looter Extensions, depends on VTClassic.dll
-				string objectName = null;
-				try
-				{
-					objectName = "inventoryPacker";		inventoryPacker = new InventoryPacker();
-					objectName = "autoTradeAdd";		autoTradeAdd = new AutoTradeAdd();
-					objectName = "autoBuySell";			autoBuySell = new AutoBuySell();
-				}
-				catch (FileNotFoundException ex) { startupErrors.Add(objectName + " failed to load: " + ex.Message + Environment.NewLine + "Is Virindi Tank running?"); }
-				catch (Exception ex) { Debug.LogException(ex); }
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void Current_PluginInitComplete_VTank(object sender, EventArgs e)
-		{
-			try
-			{
-				// Virindi Tank Extensions, depends on utank2-i.dll
-				try
-				{
-					itemInfoPrinter = new ItemInfo.ItemInfoPrinter();
-				}
-				catch (FileNotFoundException ex) { startupErrors.Add("itemInfoPrinter failed to load: " + ex.Message); }
-				catch (Exception ex) { Debug.LogException(ex); }
-
-				try
-				{
-					looter = new Looter();
-				}
-				catch (FileNotFoundException ex) { startupErrors.Add("looter failed to load: " + ex.Message + Environment.NewLine + "Is Virindi Tank running?"); }
-				catch (Exception ex) { Debug.LogException(ex); }
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void Current_PluginInitComplete_VVS(object sender, EventArgs e)
-		{
-			try
-			{
-				// Views, depends on VirindiViewService.dll
-				try
-				{
-					mainView = new MainView();
-
-					manaTrackerGUI = new ManaTrackerGUI(equipmentTracker, mainView);
-					combatTrackerGUICurrent = new CombatTrackerGUI(combatTrackerCurrent, mainView.CombatTrackerMonsterListCurrent, mainView.CombatTrackerDamageListCurrent);
-					combatTrackerGUIPersistent = new CombatTrackerGUI(combatTrackerPersistent, mainView.CombatTrackerMonsterListPersistent, mainView.CombatTrackerDamageListPersistent);
-					corpseTrackerGUI = new CorpseTrackerGUI(corpseTracker, mainView.CorpseTrackerList);
-					playerTrackerGUI = new PlayerTrackerGUI(playerTracker, mainView.PlayerTrackerList);
-					inventoryTrackerGUI = new InventoryTrackerGUI(profitLossTracker, inventoryTracker, mainView.InventoryTrackerList);
-
-					chatLoggerGroup1GUI = new ChatLoggerGUI(chatLogger, Settings.SettingsManager.ChatLogger.Groups[0], mainView.ChatLogger1List);
-					chatLoggerGroup2GUI = new ChatLoggerGUI(chatLogger, Settings.SettingsManager.ChatLogger.Groups[1], mainView.ChatLogger2List);
-
-					inventoryToolsView = new InventoryToolsView(mainView, inventoryExporter);
-					tinkeringToolsView = new TinkeringToolsView(mainView);
-
-					accountServerCharacterGUI = new AccountServerCharacterGUI(mainView);
-					serverGUI = new ServerGUI(mainView);
-
-					mainView.CombatTrackerClearCurrentStats.Hit += (s2, e2) => { try { combatTrackerCurrent.ClearStats(); } catch (Exception ex) { Debug.LogException(ex); } };
-					mainView.CombatTrackerExportCurrentStats.Hit += (s2, e2) => { try { combatTrackerCurrent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker." + DateTime.Now.ToString("yyyy-MM-dd HH-mm") + ".xml", true); } catch (Exception ex) { Debug.LogException(ex); } };
-					mainView.CombatTrackerClearPersistentStats.Hit += new EventHandler(CombatTrackerClearPersistentStats_Hit);
-
-					mainView.CorpseTrackerClearHistory.Hit += new EventHandler(CorpseTrackerClearHistory_Hit);
-
-					mainView.PlayerTrackerClearHistory.Hit += new EventHandler(PlayerTrackerClearHistory_Hit);
-
-					mainView.ChatLoggerClearHistory.Hit += new EventHandler(ChatLoggerClearHistory_Hit);
-
-					Assembly assembly = Assembly.GetExecutingAssembly();
-					System.Diagnostics.FileVersionInfo fvi = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location);
-					mainView.VersionLabel.Text = "Version: " + fvi.ProductVersion;
-				}
-				catch (FileNotFoundException ex) { startupErrors.Add("Views failed to load: " + ex.Message + Environment.NewLine + "Is Virindi View Service Running?"); }
-				catch (Exception ex) { Debug.LogException(ex); }
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		/// <summary>
-		/// This is called when the plugin is shut down. This happens only once.
-		/// </summary>
-		protected override void Shutdown()
-		{
-			try
-			{
-				savePersistentStatsTimer.Tick -= new EventHandler(SavePersistentStatsTimer_Tick);
-
-				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete);
-				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VTClassic);
-				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VTank);
-				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VVS);
-				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete_VHS);
-				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete_VHUD);
-				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete);
-				CoreManager.Current.CharacterFilter.Logoff -= new EventHandler<Decal.Adapter.Wrappers.LogoffEventArgs>(CharacterFilter_Logoff);
-				CoreManager.Current.CommandLineText -= new EventHandler<ChatParserInterceptEventArgs>(Current_CommandLineText);
-
-
-				// Views, depends on VirindiViewService.dll
-				// We dispose these before our other objects (Trackers/Macros) as these probably reference those other objects.
-				if (hud != null) hud.Dispose();
-
-				if (accountServerCharacterGUI != null) accountServerCharacterGUI.Dispose();
-				if (serverGUI != null) serverGUI.Dispose();
-
-				if (tinkeringToolsView != null) tinkeringToolsView.Dispose();
-				//if (inventoryToolsView != null) inventoryToolsView.Dispose();
-
-				if (chatLoggerGroup1GUI != null) chatLoggerGroup1GUI.Dispose();
-				if (chatLoggerGroup2GUI != null) chatLoggerGroup2GUI.Dispose();
-
-				if (inventoryTrackerGUI != null) inventoryTrackerGUI.Dispose();
-				if (playerTrackerGUI != null) playerTrackerGUI.Dispose();
-				if (corpseTrackerGUI != null) corpseTrackerGUI.Dispose();
-				if (combatTrackerGUIPersistent != null) combatTrackerGUIPersistent.Dispose();
-				if (combatTrackerGUICurrent != null) combatTrackerGUICurrent.Dispose();
-				if (manaTrackerGUI != null) manaTrackerGUI.Dispose();
-				if (mainView != null) mainView.Dispose(); // We dispose this last in the Views as the other Views reference it.
-
-
-				// Virindi Tank Extensions, depends on utank2-i.dll
-				if (itemInfoPrinter != null) itemInfoPrinter.Dispose();
-				if (looter != null) looter.Dispose();
-
-
-				// Virindi Classic Looter Extensions, depends on VTClassic.dll
-				if (inventoryPacker != null) inventoryPacker.Dispose();
-				if (autoTradeAdd != null) autoTradeAdd.Dispose();
-				if (autoBuySell != null) autoBuySell.Dispose();
-
-
-				// Relies on other decal assemblies
-				if (chatFilter != null) chatFilter.Dispose();
-
-
-				// Misc
-				if (windowFrameRemover != null) windowFrameRemover.Dispose();
-				if (windowMover != null) windowMover.Dispose();
-				if (fpsManager != null) fpsManager.Dispose();
-
-				// Loggers
-				if (chatLogger != null) chatLogger.Dispose();
-				if (chatLogFileWriter != null) chatLogFileWriter.Dispose();
-
-				// Trackers
-				if (equipmentTracker != null) equipmentTracker.Dispose();
-				if (combatTrackerCurrent != null) combatTrackerCurrent.Dispose();
-				if (combatTrackerPersistent != null) combatTrackerPersistent.Dispose();
-				if (corpseTracker != null) corpseTracker.Dispose();
-				if (playerTracker != null) playerTracker.Dispose();
-				if (inventoryTracker != null) inventoryTracker.Dispose();
-				if (profitLossTracker != null) profitLossTracker.Dispose();
-
-				// Macros
-				if (loginActions != null) loginActions.Dispose();
-				if (periodicCommands != null) periodicCommands.Dispose();
-				if (openMainPackOnLogin != null) openMainPackOnLogin.Dispose();
-				if (maximizeChatOnLogin != null) maximizeChatOnLogin.Dispose();
-				if (autoPercentConfirmation != null) autoPercentConfirmation.Dispose();
-				if (autoRecharge != null) autoRecharge.Dispose();
-				if (autoTradeAccept != null) autoTradeAccept.Dispose();
-				if (logOutOnDeath != null) logOutOnDeath.Dispose();
-
-				// General
-				if (inventoryLogger != null) inventoryLogger.Dispose();
-				if (idleActionManager != null) idleActionManager.Dispose();
-
-
-				Current = null;
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void CharacterFilter_LoginComplete_VHS(object sender, EventArgs e)
-		{
-			try
-			{
-				// Wire up Inventory Packer Hotkey
-				if (InventoryPacker != null)
-				{
-					// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
-					VirindiHotkeySystem.VHotkeyInfo packInventoryHotkey = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Pack Inventory", "Triggers the Inventory Packer Macro", 0x50, false, true, false);
-
-					VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(packInventoryHotkey);
-
-					packInventoryHotkey.Fired2 += (s, e2) =>
-					{
-						try
-						{
-							VirindiHotkeySystem.VHotkeyInfo keyInfo = (VirindiHotkeySystem.VHotkeyInfo)s;
-
-							if (!CoreManager.Current.Actions.ChatState || keyInfo.AltState || keyInfo.ControlState)
-								InventoryPacker.Start();
-						}
-						catch (FileNotFoundException) { MyClasses.VCS_Connector.SendChatTextCategorized("Errors", "<{" + PluginName + "}>: " + "Unable to start Inventory Packer. Is Virindi Tank running?", 5); }
-						catch (Exception ex) { Debug.LogException(ex); }
-					};
-				}
-
-
-				// Wire up One Touch Heal Hotkey
-				if (oneTouchHeal != null)
-				{
-					// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
-					VirindiHotkeySystem.VHotkeyInfo oneTouchHealHotkey = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "One Touch Heal", "Triggers the One Touch Healing Macro", 0, false, false, false);
-
-					VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(oneTouchHealHotkey);
-
-					oneTouchHealHotkey.Fired2 += (s, e2) =>
-					{
-						try
-						{
-							VirindiHotkeySystem.VHotkeyInfo keyInfo = (VirindiHotkeySystem.VHotkeyInfo)s;
-
-							if (!CoreManager.Current.Actions.ChatState || keyInfo.AltState || keyInfo.ControlState)
-								oneTouchHeal.Start();
-						}
-						catch (Exception ex) { Debug.LogException(ex); }
-					};
-				}
-
-
-				// Wire up Maximize/Minimize Chat Hotkey
-				// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
-				VirindiHotkeySystem.VHotkeyInfo maximizeChat = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Maximize Chat", "Maximizes Main Chat", 0, false, false, false);
-
-				VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(maximizeChat);
-
-				maximizeChat.Fired2 += (s, e2) =>
-				{
-					try
-					{
-						ChatSizeManager.Maximize();
-					}
-					catch (Exception ex) { Debug.LogException(ex); }
-				};
-
-				// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
-				VirindiHotkeySystem.VHotkeyInfo minimizeChat = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Minimize Chat", "Minimizes Main Chat", 0, false, false, false);
-
-				VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(minimizeChat);
-
-				minimizeChat.Fired2 += (s, e2) =>
-				{
-					try
-					{
-						ChatSizeManager.Minimize();
-					}
-					catch (Exception ex) { Debug.LogException(ex); }
-				};
-			}
-			catch (FileNotFoundException ex) { startupErrors.Add("Hotkey failed to bind: " + ex.Message + ". Is Virindi Hotkey System running?"); }
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void CharacterFilter_LoginComplete_VHUD(object sender, EventArgs e)
-		{
-			try
-			{
-				hud = new HUD(equipmentTracker, inventoryTracker, profitLossTracker, combatTrackerCurrent);
-			}
-			catch (FileNotFoundException ex) { startupErrors.Add("HUD failed to bind: " + ex.Message + ". Is Virindi HUDs running?"); }
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void CharacterFilter_LoginComplete(object sender, EventArgs e)
-		{
-			try
-			{
-				var stopWatch = new System.Diagnostics.Stopwatch();
-
-				// Load Persistent Stats
-				try
-				{
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Reset();
-						stopWatch.Start();
-					}
-
-					if (Settings.SettingsManager.CombatTracker.Persistent.Value)
-						combatTrackerPersistent.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
-
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Stop();
-						Debug.WriteToChat("Loaded Persistent Combat Tracker: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
-					}
-				}
-				catch (Exception ex) { Debug.LogException(ex); }
-
-				try
-				{
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Reset();
-						stopWatch.Start();
-					}
-
-					if (Settings.SettingsManager.CorpseTracker.Persistent.Value)
-						corpseTracker.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
-
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Stop();
-						Debug.WriteToChat("Loaded Persistent Corpse Trackers: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
-					}
-				}
-				catch (Exception ex) { Debug.LogException(ex); }
-
-				try
-				{
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Reset();
-						stopWatch.Start();
-					}
-
-					if (Settings.SettingsManager.PlayerTracker.Persistent.Value)
-						playerTracker.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".PlayerTracker.xml");
-
-					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-					{
-						stopWatch.Stop();
-						Debug.WriteToChat("Loaded Persistent Player Tracker: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
-					}
-				}
-				catch (Exception ex) { Debug.LogException(ex); }
-
-
-				// Load Persistent Logs
-				try
-				{
-					if (Settings.SettingsManager.ChatLogger.Persistent.Value)
-					{
-						if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-						{
-							stopWatch.Reset();
-							stopWatch.Start();
-						}
-
-						chatLogFileWriter.FileName = PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt";
-
-						List<ILoggerTarget<Loggers.Chat.LoggedChat>> chatLoggers = new List<ILoggerTarget<Loggers.Chat.LoggedChat>>();
-						chatLoggers.Add(chatLoggerGroup1GUI);
-						chatLoggers.Add(chatLoggerGroup2GUI);
-						Loggers.Chat.ChatLogImporter.Import(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt", chatLoggers);
-
-						if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-						{
-							stopWatch.Stop();
-							Debug.WriteToChat("Loaded Persistent Chat: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
-						}
-					}
-				}
-				catch (Exception ex) { Debug.LogException(ex); }
-
-
-				foreach (string startupError in startupErrors)
-					MyClasses.VCS_Connector.SendChatTextCategorized("Errors", "<{" + PluginName + "}>: Startup Error: " + startupError, 5);
-
-				startupErrors.Clear();
-
-
-				MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "Plugin now online. Server population: " + Core.CharacterFilter.ServerPopulation, 5);
-
-				savePersistentStatsTimer.Start();
-
-				//Util.ExportSpells(PluginPersonalFolder.FullName + @"\spells.csv");
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void CharacterFilter_Logoff(object sender, LogoffEventArgs e)
-		{
-			try
-			{
-				savePersistentStatsTimer.Stop();
-
-				ExportPersistentStats();
-
-				if (Settings.SettingsManager.ChatLogger.Persistent.Value)
-					chatLogFileWriter.Flush();
-
-				if (Settings.SettingsManager.CombatTracker.ExportOnLogOff.Value)
-					combatTrackerCurrent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker." + DateTime.Now.ToString("yyyy-MM-dd HH-mm") + ".xml");
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		#region ' /mt commands '
-		void Current_CommandLineText(object sender, ChatParserInterceptEventArgs e)
-		{
-			try
-			{
-				if (e.Text == null)
-					return;
-
-				if (ProcessMTCommand(e.Text))
-					e.Eat = true;
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		readonly Dictionary<string, object> rememberedSettings = new Dictionary<string, object>();
+		#region Public Methods
 
 		public bool ProcessMTCommand(string mtCommand)
 		{
@@ -716,11 +219,11 @@ namespace MagTools
 				return true;
 			}
 
-				if (lower.StartsWith("/mt quit") || lower.StartsWith("/mt exit"))
-				{
+			if (lower.StartsWith("/mt quit") || lower.StartsWith("/mt exit"))
+			{
 				PostMessageTools.SendAltF4();
 				return true;
-				}
+			}
 
 			if (lower.StartsWith("/mt click "))
 			{
@@ -845,6 +348,14 @@ namespace MagTools
 				else return false;
 
 				return true;
+			}
+
+			if (lower.StartsWith("/mt swear"))
+			{
+				PostMessageTools.SendF12();
+				PostMessageTools.SendF3();
+
+				CoreManager.Current.RenderFrame += new EventHandler<EventArgs>(Swear_Current_RenderFrame);
 			}
 
 			if ((lower.StartsWith("/mt cast ") && lower.Length > 9) || (lower.StartsWith("/mt castp ") && lower.Length > 10))
@@ -1113,7 +624,7 @@ namespace MagTools
 
 					return true;
 				}
-				
+
 				if (lower.StartsWith("/mt opt get "))
 				{
 					string optionName = lower.Substring(12, lower.Length - 12);
@@ -1138,7 +649,7 @@ namespace MagTools
 
 					return true;
 				}
-				
+
 				if (lower.StartsWith("/mt opt remember "))
 				{
 					string optionName = lower.Substring(17, lower.Length - 17);
@@ -1184,7 +695,7 @@ namespace MagTools
 
 					return true;
 				}
-				
+
 				if (lower.StartsWith("/mt opt restore "))
 				{
 					string optionName = lower.Substring(16, lower.Length - 16);
@@ -1234,7 +745,7 @@ namespace MagTools
 					Debug.WriteToChat("Failed to Restore " + optionName);
 					return false;
 				}
-				
+
 				if (lower.StartsWith("/mt opt set "))
 				{
 					string optionName = lower.Substring(12, lower.Length - 12 - (lower.Length - lower.LastIndexOf(' '))).Trim();
@@ -1292,26 +803,589 @@ namespace MagTools
 			return false;
 		}
 
-		FieldInfo GetOptionField(string path)
+		#endregion Public Methods
+
+		#region Protected Methods
+
+		/// <summary>
+		/// This is called when the plugin is shut down. This happens only once.
+		/// </summary>
+		protected override void Shutdown()
 		{
-			var settingsManagerType = Assembly.GetExecutingAssembly().GetType("MagTools.Settings.SettingsManager", false);
-
-			if (settingsManagerType == null)
-				return null;
-
-			foreach (var nestedType in settingsManagerType.GetNestedTypes())
+			try
 			{
-				foreach (var nestedField in nestedType.GetFields())
-				{
-					if (String.Equals(nestedType.Name + "." + nestedField.Name, path, StringComparison.OrdinalIgnoreCase))
-						return nestedField;
-				}
-			}
+				savePersistentStatsTimer.Tick -= new EventHandler(SavePersistentStatsTimer_Tick);
 
-			return null;
+				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete);
+				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VTClassic);
+				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VTank);
+				CoreManager.Current.PluginInitComplete -= new EventHandler<EventArgs>(Current_PluginInitComplete_VVS);
+				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete_VHS);
+				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete_VHUD);
+				CoreManager.Current.CharacterFilter.LoginComplete -= new EventHandler(CharacterFilter_LoginComplete);
+				CoreManager.Current.CharacterFilter.Logoff -= new EventHandler<Decal.Adapter.Wrappers.LogoffEventArgs>(CharacterFilter_Logoff);
+				CoreManager.Current.CommandLineText -= new EventHandler<ChatParserInterceptEventArgs>(Current_CommandLineText);
+
+				// Views, depends on VirindiViewService.dll We dispose these before our other objects
+				// (Trackers/Macros) as these probably reference those other objects.
+				if (hud != null) hud.Dispose();
+
+				if (accountServerCharacterGUI != null) accountServerCharacterGUI.Dispose();
+				if (serverGUI != null) serverGUI.Dispose();
+
+				if (tinkeringToolsView != null) tinkeringToolsView.Dispose();
+				//if (inventoryToolsView != null) inventoryToolsView.Dispose();
+
+				if (chatLoggerGroup1GUI != null) chatLoggerGroup1GUI.Dispose();
+				if (chatLoggerGroup2GUI != null) chatLoggerGroup2GUI.Dispose();
+
+				if (inventoryTrackerGUI != null) inventoryTrackerGUI.Dispose();
+				if (playerTrackerGUI != null) playerTrackerGUI.Dispose();
+				if (corpseTrackerGUI != null) corpseTrackerGUI.Dispose();
+				if (combatTrackerGUIPersistent != null) combatTrackerGUIPersistent.Dispose();
+				if (combatTrackerGUICurrent != null) combatTrackerGUICurrent.Dispose();
+				if (manaTrackerGUI != null) manaTrackerGUI.Dispose();
+				if (mainView != null) mainView.Dispose(); // We dispose this last in the Views as the other Views reference it.
+
+				// Virindi Tank Extensions, depends on utank2-i.dll
+				if (itemInfoPrinter != null) itemInfoPrinter.Dispose();
+				if (looter != null) looter.Dispose();
+
+				// Virindi Classic Looter Extensions, depends on VTClassic.dll
+				if (inventoryPacker != null) inventoryPacker.Dispose();
+				if (autoTradeAdd != null) autoTradeAdd.Dispose();
+				if (autoBuySell != null) autoBuySell.Dispose();
+
+				// Relies on other decal assemblies
+				if (chatFilter != null) chatFilter.Dispose();
+
+				// Misc
+				if (windowFrameRemover != null) windowFrameRemover.Dispose();
+				if (windowMover != null) windowMover.Dispose();
+				if (fpsManager != null) fpsManager.Dispose();
+
+				// Loggers
+				if (chatLogger != null) chatLogger.Dispose();
+				if (chatLogFileWriter != null) chatLogFileWriter.Dispose();
+
+				// Trackers
+				if (equipmentTracker != null) equipmentTracker.Dispose();
+				if (combatTrackerCurrent != null) combatTrackerCurrent.Dispose();
+				if (combatTrackerPersistent != null) combatTrackerPersistent.Dispose();
+				if (corpseTracker != null) corpseTracker.Dispose();
+				if (playerTracker != null) playerTracker.Dispose();
+				if (inventoryTracker != null) inventoryTracker.Dispose();
+				if (profitLossTracker != null) profitLossTracker.Dispose();
+
+				// Macros
+				if (loginActions != null) loginActions.Dispose();
+				if (periodicCommands != null) periodicCommands.Dispose();
+				if (openMainPackOnLogin != null) openMainPackOnLogin.Dispose();
+				if (maximizeChatOnLogin != null) maximizeChatOnLogin.Dispose();
+				if (autoPercentConfirmation != null) autoPercentConfirmation.Dispose();
+				if (autoRecharge != null) autoRecharge.Dispose();
+				if (autoTradeAccept != null) autoTradeAccept.Dispose();
+				if (logOutOnDeath != null) logOutOnDeath.Dispose();
+
+				// General
+				if (inventoryLogger != null) inventoryLogger.Dispose();
+				if (idleActionManager != null) idleActionManager.Dispose();
+
+				Current = null;
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
 		}
 
-		int FindIdForName(string name, bool searchInInventory, bool searchOpenContainer, bool searchEnvironment, bool partialMatch, int idToSkip = 0)
+		/// <summary>
+		/// This is called when the plugin is started up. This happens only once. We init most of our
+		/// objects here, EXCEPT ones that depend on other assemblies (not counting decal assemblies).
+		/// </summary>
+		protected override void Startup()
+		{
+			try
+			{
+				Current = this;
+
+				Debug.Init(PluginPersonalFolder.FullName + @"\Exceptions.txt", PluginName);
+				Mag.Shared.Settings.SettingsFile.Init(PluginPersonalFolder.FullName + @"\" + PluginName + ".xml", PluginName);
+
+				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete);
+				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VTClassic);
+				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VTank);
+				CoreManager.Current.PluginInitComplete += new EventHandler<EventArgs>(Current_PluginInitComplete_VVS);
+				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete_VHS);
+				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete_VHUD);
+				CoreManager.Current.CharacterFilter.LoginComplete += new EventHandler(CharacterFilter_LoginComplete);
+				CoreManager.Current.CharacterFilter.Logoff += new EventHandler<Decal.Adapter.Wrappers.LogoffEventArgs>(CharacterFilter_Logoff);
+				CoreManager.Current.CommandLineText += new EventHandler<ChatParserInterceptEventArgs>(Current_CommandLineText);
+
+				// General
+				inventoryExporter = new InventoryExporter();
+				inventoryLogger = new InventoryLogger();
+				idleActionManager = new IdleActionManager();
+
+				// Macros
+				loginActions = new LoginActions();
+				periodicCommands = new PeriodicCommands();
+				openMainPackOnLogin = new OpenMainPackOnLogin();
+				maximizeChatOnLogin = new MaximizeChatOnLogin();
+				autoPercentConfirmation = new AutoPercentConfirmation();
+				autoRecharge = new AutoRecharge();
+				autoTradeAccept = new AutoTradeAccept();
+				oneTouchHeal = new OneTouchHeal();
+				logOutOnDeath = new LogOutOnDeath();
+
+				// Trackers
+				equipmentTracker = new Trackers.Equipment.EquipmentTracker();
+				combatTrackerCurrent = new Trackers.Combat.CombatTracker();
+				combatTrackerPersistent = new Trackers.Combat.CombatTracker();
+				corpseTracker = new Trackers.Corpse.CorpseTracker();
+				playerTracker = new Trackers.Player.PlayerTracker();
+				inventoryTracker = new Trackers.Inventory.InventoryTracker();
+				profitLossTracker = new Trackers.ProfitLoss.ProfitLossTracker();
+
+				// Loggers
+				chatLogger = new Loggers.Chat.ChatLogger();
+				chatLogFileWriter = new Loggers.Chat.BufferedChatLogFileWriter(null, chatLogger, TimeSpan.FromMinutes(10));
+
+				// Misc
+				windowFrameRemover = new WindowFrameRemover();
+				windowMover = new WindowMover();
+				fpsManager = new FPSManager();
+
+				savePersistentStatsTimer.Interval = 600000; // Set the timer to run once every 10 minutes
+				savePersistentStatsTimer.Tick += new EventHandler(SavePersistentStatsTimer_Tick);
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		#endregion Protected Methods
+
+		#region Private Methods
+
+		private void CharacterFilter_LoginComplete(object sender, EventArgs e)
+		{
+			try
+			{
+				var stopWatch = new System.Diagnostics.Stopwatch();
+
+				// Load Persistent Stats
+				try
+				{
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Reset();
+						stopWatch.Start();
+					}
+
+					if (Settings.SettingsManager.CombatTracker.Persistent.Value)
+						combatTrackerPersistent.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
+
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Stop();
+						Debug.WriteToChat("Loaded Persistent Combat Tracker: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+					}
+				}
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				try
+				{
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Reset();
+						stopWatch.Start();
+					}
+
+					if (Settings.SettingsManager.CorpseTracker.Persistent.Value)
+						corpseTracker.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
+
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Stop();
+						Debug.WriteToChat("Loaded Persistent Corpse Trackers: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+					}
+				}
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				try
+				{
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Reset();
+						stopWatch.Start();
+					}
+
+					if (Settings.SettingsManager.PlayerTracker.Persistent.Value)
+						playerTracker.ImportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".PlayerTracker.xml");
+
+					if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+					{
+						stopWatch.Stop();
+						Debug.WriteToChat("Loaded Persistent Player Tracker: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+					}
+				}
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				// Load Persistent Logs
+				try
+				{
+					if (Settings.SettingsManager.ChatLogger.Persistent.Value)
+					{
+						if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+						{
+							stopWatch.Reset();
+							stopWatch.Start();
+						}
+
+						chatLogFileWriter.FileName = PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt";
+
+						List<ILoggerTarget<Loggers.Chat.LoggedChat>> chatLoggers = new List<ILoggerTarget<Loggers.Chat.LoggedChat>>();
+						chatLoggers.Add(chatLoggerGroup1GUI);
+						chatLoggers.Add(chatLoggerGroup2GUI);
+						Loggers.Chat.ChatLogImporter.Import(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt", chatLoggers);
+
+						if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+						{
+							stopWatch.Stop();
+							Debug.WriteToChat("Loaded Persistent Chat: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+						}
+					}
+				}
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				foreach (string startupError in startupErrors)
+					MyClasses.VCS_Connector.SendChatTextCategorized("Errors", "<{" + PluginName + "}>: Startup Error: " + startupError, 5);
+
+				startupErrors.Clear();
+
+				MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "Plugin now online. Server population: " + Core.CharacterFilter.ServerPopulation, 5);
+
+				savePersistentStatsTimer.Start();
+
+				//Util.ExportSpells(PluginPersonalFolder.FullName + @"\spells.csv");
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void CharacterFilter_LoginComplete_VHS(object sender, EventArgs e)
+		{
+			try
+			{
+				// Wire up Inventory Packer Hotkey
+				if (InventoryPacker != null)
+				{
+					// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
+					VirindiHotkeySystem.VHotkeyInfo packInventoryHotkey = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Pack Inventory", "Triggers the Inventory Packer Macro", 0x50, false, true, false);
+
+					VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(packInventoryHotkey);
+
+					packInventoryHotkey.Fired2 += (s, e2) =>
+					{
+						try
+						{
+							VirindiHotkeySystem.VHotkeyInfo keyInfo = (VirindiHotkeySystem.VHotkeyInfo)s;
+
+							if (!CoreManager.Current.Actions.ChatState || keyInfo.AltState || keyInfo.ControlState)
+								InventoryPacker.Start();
+						}
+						catch (FileNotFoundException) { MyClasses.VCS_Connector.SendChatTextCategorized("Errors", "<{" + PluginName + "}>: " + "Unable to start Inventory Packer. Is Virindi Tank running?", 5); }
+						catch (Exception ex) { Debug.LogException(ex); }
+					};
+				}
+
+				// Wire up One Touch Heal Hotkey
+				if (oneTouchHeal != null)
+				{
+					// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
+					VirindiHotkeySystem.VHotkeyInfo oneTouchHealHotkey = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "One Touch Heal", "Triggers the One Touch Healing Macro", 0, false, false, false);
+
+					VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(oneTouchHealHotkey);
+
+					oneTouchHealHotkey.Fired2 += (s, e2) =>
+					{
+						try
+						{
+							VirindiHotkeySystem.VHotkeyInfo keyInfo = (VirindiHotkeySystem.VHotkeyInfo)s;
+
+							if (!CoreManager.Current.Actions.ChatState || keyInfo.AltState || keyInfo.ControlState)
+								oneTouchHeal.Start();
+						}
+						catch (Exception ex) { Debug.LogException(ex); }
+					};
+				}
+
+				// Wire up Maximize/Minimize Chat Hotkey http://delphi.about.com/od/objectpascalide/l/blvkc.htm
+				VirindiHotkeySystem.VHotkeyInfo maximizeChat = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Maximize Chat", "Maximizes Main Chat", 0, false, false, false);
+
+				VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(maximizeChat);
+
+				maximizeChat.Fired2 += (s, e2) =>
+				{
+					try
+					{
+						ChatSizeManager.Maximize();
+					}
+					catch (Exception ex) { Debug.LogException(ex); }
+				};
+
+				// http://delphi.about.com/od/objectpascalide/l/blvkc.htm
+				VirindiHotkeySystem.VHotkeyInfo minimizeChat = new VirindiHotkeySystem.VHotkeyInfo("Mag-Tools", true, "Minimize Chat", "Minimizes Main Chat", 0, false, false, false);
+
+				VirindiHotkeySystem.VHotkeySystem.InstanceReal.AddHotkey(minimizeChat);
+
+				minimizeChat.Fired2 += (s, e2) =>
+				{
+					try
+					{
+						ChatSizeManager.Minimize();
+					}
+					catch (Exception ex) { Debug.LogException(ex); }
+				};
+			}
+			catch (FileNotFoundException ex) { startupErrors.Add("Hotkey failed to bind: " + ex.Message + ". Is Virindi Hotkey System running?"); }
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void CharacterFilter_LoginComplete_VHUD(object sender, EventArgs e)
+		{
+			try
+			{
+				hud = new HUD(equipmentTracker, inventoryTracker, profitLossTracker, combatTrackerCurrent);
+			}
+			catch (FileNotFoundException ex) { startupErrors.Add("HUD failed to bind: " + ex.Message + ". Is Virindi HUDs running?"); }
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void CharacterFilter_Logoff(object sender, LogoffEventArgs e)
+		{
+			try
+			{
+				savePersistentStatsTimer.Stop();
+
+				ExportPersistentStats();
+
+				if (Settings.SettingsManager.ChatLogger.Persistent.Value)
+					chatLogFileWriter.Flush();
+
+				if (Settings.SettingsManager.CombatTracker.ExportOnLogOff.Value)
+					combatTrackerCurrent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker." + DateTime.Now.ToString("yyyy-MM-dd HH-mm") + ".xml");
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void ChatLoggerClearHistory_Hit(object sender, EventArgs e)
+		{
+			try
+			{
+				chatLoggerGroup1GUI.Clear();
+
+				chatLoggerGroup2GUI.Clear();
+
+				if (Settings.SettingsManager.CombatTracker.Persistent.Value)
+					combatTrackerPersistent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt");
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void CombatTrackerClearPersistentStats_Hit(object sender, EventArgs e)
+		{
+			try
+			{
+				combatTrackerPersistent.ClearStats();
+
+				FileInfo fileInfo = new FileInfo(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
+
+				if (fileInfo.Exists)
+				{
+					fileInfo.Delete();
+
+					MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "File deleted: " + fileInfo.FullName, 5);
+				}
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void CorpseTrackerClearHistory_Hit(object sender, EventArgs e)
+		{
+			try
+			{
+				corpseTracker.ClearStats();
+
+				FileInfo fileInfo = new FileInfo(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
+
+				if (fileInfo.Exists)
+				{
+					fileInfo.Delete();
+
+					MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "File deleted: " + fileInfo.FullName, 5);
+				}
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void Current_CommandLineText(object sender, ChatParserInterceptEventArgs e)
+		{
+			try
+			{
+				if (e.Text == null)
+					return;
+
+				if (ProcessMTCommand(e.Text))
+					e.Eat = true;
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		/// <summary>
+		/// We init objects that depend on other assemblies here. We don't do this in Startup()
+		/// because our plugin may have loaded before theirs. It is also possible that the assembly
+		/// these objects refer to isn't loaded at all, or may not even exist.
+		/// </summary>
+		/// <param name="sender"></param>
+		/// <param name="e"></param>
+		private void Current_PluginInitComplete(object sender, EventArgs e)
+		{
+			try
+			{
+				// Relies on other decal assemblies
+				try
+				{
+					chatFilter = new ChatFilter(Host); // Decal.Interop.Core
+				}
+				catch (FileNotFoundException ex) { startupErrors.Add("chatFilter failed to load: " + ex.Message); }
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				//These are already wrapped and shouldn't throw.
+				MyClasses.VCS_Connector.Initialize(Host, "MagTools");
+				MyClasses.VCS_Connector.InitializeCategory("CommandLine", "Generic plugin text");
+				MyClasses.VCS_Connector.InitializeCategory("Errors", "Error messages");
+				MyClasses.VCS_Connector.InitializeCategory("IDs", "ID messages");
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void Current_PluginInitComplete_VTank(object sender, EventArgs e)
+		{
+			try
+			{
+				// Virindi Tank Extensions, depends on utank2-i.dll
+				try
+				{
+					itemInfoPrinter = new ItemInfo.ItemInfoPrinter();
+				}
+				catch (FileNotFoundException ex) { startupErrors.Add("itemInfoPrinter failed to load: " + ex.Message); }
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				try
+				{
+					looter = new Looter();
+				}
+				catch (FileNotFoundException ex) { startupErrors.Add("looter failed to load: " + ex.Message + Environment.NewLine + "Is Virindi Tank running?"); }
+				catch (Exception ex) { Debug.LogException(ex); }
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void Current_PluginInitComplete_VTClassic(object sender, EventArgs e)
+		{
+			try
+			{
+				// Virindi Classic Looter Extensions, depends on VTClassic.dll
+				string objectName = null;
+				try
+				{
+					objectName = "inventoryPacker"; inventoryPacker = new InventoryPacker();
+					objectName = "autoTradeAdd"; autoTradeAdd = new AutoTradeAdd();
+					objectName = "autoBuySell"; autoBuySell = new AutoBuySell();
+				}
+				catch (FileNotFoundException ex) { startupErrors.Add(objectName + " failed to load: " + ex.Message + Environment.NewLine + "Is Virindi Tank running?"); }
+				catch (Exception ex) { Debug.LogException(ex); }
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void Current_PluginInitComplete_VVS(object sender, EventArgs e)
+		{
+			try
+			{
+				// Views, depends on VirindiViewService.dll
+				try
+				{
+					mainView = new MainView();
+
+					manaTrackerGUI = new ManaTrackerGUI(equipmentTracker, mainView);
+					combatTrackerGUICurrent = new CombatTrackerGUI(combatTrackerCurrent, mainView.CombatTrackerMonsterListCurrent, mainView.CombatTrackerDamageListCurrent);
+					combatTrackerGUIPersistent = new CombatTrackerGUI(combatTrackerPersistent, mainView.CombatTrackerMonsterListPersistent, mainView.CombatTrackerDamageListPersistent);
+					corpseTrackerGUI = new CorpseTrackerGUI(corpseTracker, mainView.CorpseTrackerList);
+					playerTrackerGUI = new PlayerTrackerGUI(playerTracker, mainView.PlayerTrackerList);
+					inventoryTrackerGUI = new InventoryTrackerGUI(profitLossTracker, inventoryTracker, mainView.InventoryTrackerList);
+
+					chatLoggerGroup1GUI = new ChatLoggerGUI(chatLogger, Settings.SettingsManager.ChatLogger.Groups[0], mainView.ChatLogger1List);
+					chatLoggerGroup2GUI = new ChatLoggerGUI(chatLogger, Settings.SettingsManager.ChatLogger.Groups[1], mainView.ChatLogger2List);
+
+					inventoryToolsView = new InventoryToolsView(mainView, inventoryExporter);
+					tinkeringToolsView = new TinkeringToolsView(mainView);
+
+					accountServerCharacterGUI = new AccountServerCharacterGUI(mainView);
+					serverGUI = new ServerGUI(mainView);
+
+					mainView.CombatTrackerClearCurrentStats.Hit += (s2, e2) => { try { combatTrackerCurrent.ClearStats(); } catch (Exception ex) { Debug.LogException(ex); } };
+					mainView.CombatTrackerExportCurrentStats.Hit += (s2, e2) => { try { combatTrackerCurrent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker." + DateTime.Now.ToString("yyyy-MM-dd HH-mm") + ".xml", true); } catch (Exception ex) { Debug.LogException(ex); } };
+					mainView.CombatTrackerClearPersistentStats.Hit += new EventHandler(CombatTrackerClearPersistentStats_Hit);
+
+					mainView.CorpseTrackerClearHistory.Hit += new EventHandler(CorpseTrackerClearHistory_Hit);
+
+					mainView.PlayerTrackerClearHistory.Hit += new EventHandler(PlayerTrackerClearHistory_Hit);
+
+					mainView.ChatLoggerClearHistory.Hit += new EventHandler(ChatLoggerClearHistory_Hit);
+
+					Assembly assembly = Assembly.GetExecutingAssembly();
+					System.Diagnostics.FileVersionInfo fvi = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location);
+					mainView.VersionLabel.Text = "Version: " + fvi.ProductVersion;
+				}
+				catch (FileNotFoundException ex) { startupErrors.Add("Views failed to load: " + ex.Message + Environment.NewLine + "Is Virindi View Service Running?"); }
+				catch (Exception ex) { Debug.LogException(ex); }
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private void ExportPersistentStats()
+		{
+			var stopWatch = new System.Diagnostics.Stopwatch();
+
+			if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+				stopWatch.Start();
+
+			if (Settings.SettingsManager.CombatTracker.Persistent.Value)
+				combatTrackerPersistent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
+
+			if (Settings.SettingsManager.CorpseTracker.Persistent.Value)
+				corpseTracker.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
+
+			if (Settings.SettingsManager.PlayerTracker.Persistent.Value)
+				playerTracker.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".PlayerTracker.xml");
+
+			if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+			{
+				stopWatch.Stop();
+				Debug.WriteToChat("Export Persistent Stats: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+			}
+		}
+
+		private void FellowCreate_Current_RenderFrame(object sender, EventArgs e)
+		{
+			try
+			{
+				CoreManager.Current.RenderFrame -= new EventHandler<EventArgs>(FellowCreate_Current_RenderFrame);
+
+				Rectangle rect = Core.Actions.UIElementRegion(UIElementType.Panels);
+				PostMessageTools.SendMouseClick(rect.X + 145, rect.Y + 343);
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		private int FindIdForName(string name, bool searchInInventory, bool searchOpenContainer, bool searchEnvironment, bool partialMatch, int idToSkip = 0)
 		{
 			// Exact match attempt first
 			if (searchInInventory)
@@ -1367,64 +1441,32 @@ namespace MagTools
 
 					if (closestObject != null)
 						return closestObject.Id;
-				}	
+				}
 			}
 
 			return -1;
 		}
 
-		void FellowCreate_Current_RenderFrame(object sender, EventArgs e)
+		private FieldInfo GetOptionField(string path)
 		{
-			try
+			var settingsManagerType = Assembly.GetExecutingAssembly().GetType("MagTools.Settings.SettingsManager", false);
+
+			if (settingsManagerType == null)
+				return null;
+
+			foreach (var nestedType in settingsManagerType.GetNestedTypes())
 			{
-				CoreManager.Current.RenderFrame -= new EventHandler<EventArgs>(FellowCreate_Current_RenderFrame);
-
-				Rectangle rect = Core.Actions.UIElementRegion(UIElementType.Panels);
-				PostMessageTools.SendMouseClick(rect.X + 145, rect.Y + 343);
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-		#endregion
-
-		#region ' Clear Persistent Stats Buttons '
-
-		void CombatTrackerClearPersistentStats_Hit(object sender, EventArgs e)
-		{
-			try
-			{
-				combatTrackerPersistent.ClearStats();
-
-				FileInfo fileInfo = new FileInfo(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
-
-				if (fileInfo.Exists)
+				foreach (var nestedField in nestedType.GetFields())
 				{
-					fileInfo.Delete();
-
-					MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "File deleted: " + fileInfo.FullName, 5);
+					if (String.Equals(nestedType.Name + "." + nestedField.Name, path, StringComparison.OrdinalIgnoreCase))
+						return nestedField;
 				}
 			}
-			catch (Exception ex) { Debug.LogException(ex); }
+
+			return null;
 		}
 
-		void CorpseTrackerClearHistory_Hit(object sender, EventArgs e)
-		{
-			try
-			{
-				corpseTracker.ClearStats();
-
-				FileInfo fileInfo = new FileInfo(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
-
-				if (fileInfo.Exists)
-				{
-					fileInfo.Delete();
-
-					MyClasses.VCS_Connector.SendChatTextCategorized("CommandLine", "<{" + PluginName + "}>: " + "File deleted: " + fileInfo.FullName, 5);
-				}
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		void PlayerTrackerClearHistory_Hit(object sender, EventArgs e)
+		private void PlayerTrackerClearHistory_Hit(object sender, EventArgs e)
 		{
 			try
 			{
@@ -1442,27 +1484,7 @@ namespace MagTools
 			catch (Exception ex) { Debug.LogException(ex); }
 		}
 
-		#endregion
-
-		#region ' Clear Persistent Logs Buttons '
-
-		void ChatLoggerClearHistory_Hit(object sender, EventArgs e)
-		{
-			try
-			{
-				chatLoggerGroup1GUI.Clear();
-
-				chatLoggerGroup2GUI.Clear();
-
-				if (Settings.SettingsManager.CombatTracker.Persistent.Value)
-					combatTrackerPersistent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".ChatLogger.txt");
-			}
-			catch (Exception ex) { Debug.LogException(ex); }
-		}
-
-		#endregion
-
-		void SavePersistentStatsTimer_Tick(object sender, EventArgs e)
+		private void SavePersistentStatsTimer_Tick(object sender, EventArgs e)
 		{
 			try
 			{
@@ -1471,27 +1493,55 @@ namespace MagTools
 			catch (Exception ex) { Debug.LogException(ex); }
 		}
 
-		void ExportPersistentStats()
+		private void Swear_Current_RenderFrame(object sender, EventArgs e)
 		{
-			var stopWatch = new System.Diagnostics.Stopwatch();
-
-			if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
-				stopWatch.Start();
-
-			if (Settings.SettingsManager.CombatTracker.Persistent.Value)
-				combatTrackerPersistent.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CombatTracker.xml");
-
-			if (Settings.SettingsManager.CorpseTracker.Persistent.Value)
-				corpseTracker.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".CorpseTracker.xml");
-
-			if (Settings.SettingsManager.PlayerTracker.Persistent.Value)
-				playerTracker.ExportStats(PluginPersonalFolder.FullName + @"\" + CoreManager.Current.CharacterFilter.Server + @"\" + CoreManager.Current.CharacterFilter.Name + ".PlayerTracker.xml");
-
-			if (Settings.SettingsManager.Misc.VerboseDebuggingEnabled.Value)
+			try
 			{
-				stopWatch.Stop();
-				Debug.WriteToChat("Export Persistent Stats: " + stopWatch.Elapsed.TotalMilliseconds.ToString("N0") + "ms");
+				CoreManager.Current.RenderFrame -= new EventHandler<EventArgs>(Swear_Current_RenderFrame);
+
+				Rectangle rect = Core.Actions.UIElementRegion(UIElementType.Panels);
+				PostMessageTools.SendMouseClick(rect.X + 20, rect.Bottom - 20);
+			}
+			catch (Exception ex) { Debug.LogException(ex); }
+		}
+
+		#endregion Private Methods
+
+		#region Public Properties + Indexers
+
+		/// <summary>
+		/// Returns the current instance of the plugin in Decal. If the plugin hasn't been loaded yet
+		/// this will return null.
+		/// </summary>
+		public static IPluginCore Current { get; private set; }
+
+		public Trackers.Equipment.IEquipmentTracker EquipmentTracker { get { return equipmentTracker; } }
+
+		public IInventoryPacker InventoryPacker { get { return inventoryPacker; } }
+
+		public ILooter Looter { get { return looter; } }
+
+		#endregion Public Properties + Indexers
+
+		#region Internal Properties + Indexers
+
+		internal static DirectoryInfo PluginPersonalFolder
+		{
+			get
+			{
+				DirectoryInfo pluginPersonalFolder = new DirectoryInfo(Environment.GetFolderPath(Environment.SpecialFolder.Personal) + @"\Decal Plugins\" + PluginName);
+
+				try
+				{
+					if (!pluginPersonalFolder.Exists)
+						pluginPersonalFolder.Create();
+				}
+				catch (Exception ex) { Debug.LogException(ex); }
+
+				return pluginPersonalFolder;
 			}
 		}
+
+		#endregion Internal Properties + Indexers
 	}
 }
