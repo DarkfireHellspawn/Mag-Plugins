@@ -8,14 +8,14 @@ namespace Mag_LootParser
 {
     class IdentResponse : LogItem
     {
-        public int Id;
+        public uint Id;
 
         public ObjectClass ObjectClass;
 
         public Dictionary<int, bool> BoolValues = new Dictionary<int, bool>();
         public Dictionary<int, double> DoubleValues = new Dictionary<int, double>();
         public Dictionary<IntValueKey, int> LongValues = new Dictionary<IntValueKey, int>();
-        public Dictionary<int, string> StringValues = new Dictionary<int, string>();
+        public Dictionary<StringValueKey, string> StringValues = new Dictionary<StringValueKey, string>();
 
         public List<int> ActiveSpells = new List<int>();
         public List<int> Spells = new List<int>();
@@ -35,7 +35,7 @@ namespace Mag_LootParser
                 switch (kvp.Key)
                 {
                     case "Id":
-                        Id = int.Parse((string)kvp.Value);
+                        Id = (uint)int.Parse((string)kvp.Value);
                         break;
 
                     case "ObjectClass":
@@ -93,7 +93,7 @@ namespace Mag_LootParser
 
                             foreach (var kvp2 in values)
                             {
-                                var key = int.Parse(kvp2.Key);
+                                var key = (StringValueKey)int.Parse(kvp2.Key);
 
                                 StringValues[key] = kvp2.Value.ToString();
                             }
@@ -196,6 +196,23 @@ namespace Mag_LootParser
                         throw new NotImplementedException();
                 }
             }
+        }
+
+
+        public bool IsTrophy()
+        {
+            if (ObjectClass == ObjectClass.MeleeWeapon ||
+                ObjectClass == ObjectClass.MissileWeapon ||
+                ObjectClass == ObjectClass.WandStaffOrb ||
+                ObjectClass == ObjectClass.Armor ||
+                ObjectClass == ObjectClass.Clothing ||
+                ObjectClass == ObjectClass.Jewelry)
+            {
+                if (!LongValues.ContainsKey(IntValueKey.Workmanship))
+                    return true;
+            }
+
+            return false;
         }
     }
 }
